@@ -1,4 +1,4 @@
-import os, logging, threading, re
+import os, logging, threading, re, asyncio, random
 from flask import Flask
 import PyPDF2
 from telegram import Update
@@ -7,7 +7,7 @@ from google import genai
 from docx import Document
 from fpdf import FPDF
 
-# === 1. حل مشكلة البورت ===
+# === 1. حل مشكلة البورت في Render ===
 app = Flask(__name__)
 @app.route('/')
 def home(): return "TeacherMateBot - Ready ✅"
@@ -24,45 +24,32 @@ logging.basicConfig(level=logging.INFO)
 
 SYSTEM_PROMPT = """
 أنت معلم خبير لكتاب "لغتي الخالدة - الصف الأول المتوسط".
-
-قوانين صارمة:
-1. لا تخرج أبداً عن منهج الكتاب. كل إجاباتك من نص الكتاب المرفق فقط.
-2. لا تقول "لا يمكنني إرسال ملفات". أنت فقط تنتج النص، والبوت سيحوله لملف.
-3. إذا طلب اختبار: اعمل اختبار كامل من الكتاب مع 3 أقسام: اختيار من متعدد، صح وخطأ، مقالي. مع نموذج الإجابة.
-4. إذا طلب تلخيص: لخص الوحدة المطلوبة فقط.
-5. إذا ذكر رقم صفحة: اذهب لتلك الصفحة واعط النص كاملاً.
-6. لا تسأل المستخدم ماذا تريد، جاوب مباشرة.
+قوانين: لا تخرج عن منهج الكتاب. جاوب مباشرة. اذا طلب اختبار اعمل 5 اختيارات و5 صح وخطأ و5 مقالي مع الاجابات. اذا ذكر صفحة اذهب لتلك الصفحة.
 """
 
 def make_docx(text, path="/tmp/اختبار.docx"):
     doc = Document()
     doc.add_heading('اختبار لغتي الخالدة', 0)
     for line in text.split('\n'):
-        if line.strip():
-            doc.add_paragraph(line.strip())
+        if line.strip(): doc.add_paragraph(line.strip())
     doc.save(path)
     return path
 
 def make_pdf(text, path="/tmp/اختبار.pdf"):
     pdf = FPDF()
     pdf.add_page()
-    # نستخدم خط يدعم العربية موجود في سيرفر Render
     try:
         pdf.add_font("DejaVu", "", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", uni=True)
         pdf.set_font("DejaVu", "", 11)
     except:
         pdf.set_font("Arial", "", 11)
-    
     for line in text.split('\n'):
-        if line.strip():
-            # تنظيف بسيط للعربية عشان ما يعلق
-            safe_line = line.strip()
-            pdf.multi_cell(0, 8, safe_line)
+        if line.strip(): pdf.multi_cell(0, 8, line.strip())
     pdf.output(path)
     return path
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أهلا! أرسل كتاب لغتي الخالدة PDF وبعدها اطلب أي شي (اختبار، تلخيص، صفحة 72) وأنا أسويه لك ملف 📚")
+    await update.message.reply_text("أهلا! أرسل الكتاب PDF وبعدها اطلب أي شي (اختبار، صفحة 72) وأنا أسويه لك ملف 📚")
 
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("جاري قراءة الكتاب كامل... ⏳")
@@ -74,41 +61,56 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i, page in enumerate(reader.pages):
             text += f"\n[صفحة {i+1}]\n" + (page.extract_text() or "")
     context.user_data['book'] = text
-    await update.message.reply_text(f"تم ✅ قرأت {len(reader.pages)} صفحة. اطلب: سوي لي اختبار، أو تلخيص، أو اسأل عن أي صفحة.")
+    await update.message.reply_text(f"تم ✅ قرأت {len(reader.pages)} صفحة. اطلب اللي تبيه!")
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'book' not in context.user_data:
         await update.message.reply_text("أرسل الكتاب PDF أولاً")
         return
-    await update.message.reply_text("جاري التجهيز... 🤔 (10 ثواني)")
-    try:
-        book = context.user_data['book'][:40000]
-        # لو سأل عن صفحة محددة نركز عليها
-        m = re.search(r'(\d+)', update.message.text)
-        if m:
-            pn = m.group(1)
-            idx = book.find(f"[صفحة {pn}]")
-            if idx != -1:
-                book = book[max(0, idx-1000): idx+8000]
+    await update.message.reply_text("جاري التجهيز... 🤔")
 
-        prompt = f"{SYSTEM_PROMPT}\n\nنص الكتاب:\n{book}\n\nسؤال الطالب: {update.message.text}"
-        res = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
-        answer = res.text
+    MODELS = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-1.5-flash"]
 
-        # 1. نرسل النص كرسائل
-        for i in range(0, len(answer), 4000):
-            await update.message.reply_text(answer[i:i+4000])
+    book = context.user_data['book'][:35000]
+    m = re.search(r'(\d+)', update.message.text)
+    if m:
+        pn = m.group(1)
+        idx = book.find(f"[صفحة {pn}]")
+        if idx != -1:
+            book = book[max(0, idx-1000): idx+8000]
 
-        # 2. نسوي الملفات ونرسلها فعلاً
-        docx_path = make_docx(answer)
-        pdf_path = make_pdf(answer)
-        
-        await context.bot.send_document(chat_id=update.effective_chat.id, document=open(docx_path, 'rb'), filename="اختبار_لغتي_الخالدة.docx")
-        await context.bot.send_document(chat_id=update.effective_chat.id, document=open(pdf_path, 'rb'), filename="اختبار_لغتي_الخالدة.pdf")
-        await update.message.reply_text("تم إرسال الملفين Word و PDF فوق 👆 جاهزين للطباعة")
+    prompt = f"{SYSTEM_PROMPT}\n\nنص الكتاب:\n{book}\n\nسؤال: {update.message.text}"
+    answer = None
+    used_model = ""
+    last_error = ""
+    
+    for model_name in MODELS:
+        for attempt in range(3):
+            try:
+                res = client.models.generate_content(model=model_name, contents=prompt)
+                answer = res.text
+                used_model = model_name
+                break
+            except Exception as e:
+                last_error = str(e)
+                if "503" in last_error or "UNAVAILABLE" in last_error:
+                    await asyncio.sleep(2)
+                    continue
+                break
+        if answer: break
 
-    except Exception as e:
-        await update.message.reply_text(f"خطأ: {e}")
+    if not answer:
+        await update.message.reply_text(f"جوجل مضغوط (503) جرب بعد دقيقة 🙏")
+        return
+
+    for i in range(0, len(answer), 4000):
+        await update.message.reply_text(answer[i:i+4000])
+
+    docx_path = make_docx(answer)
+    pdf_path = make_pdf(answer)
+    await context.bot.send_document(chat_id=update.effective_chat.id, document=open(docx_path, 'rb'), filename="اختبار.docx")
+    await context.bot.send_document(chat_id=update.effective_chat.id, document=open(pdf_path, 'rb'), filename="اختبار.pdf")
+    await update.message.reply_text(f"تم ✅ بـ {used_model} - الملفين فوق 👆")
 
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
