@@ -1,4 +1,4 @@
 python-telegram-bot
 PyPDF2
-google-genai
+google-generativeai
 Flask
