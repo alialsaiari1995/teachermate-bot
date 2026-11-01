@@ -3,27 +3,23 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import PyPDF2
-import google.generativeai as genai
+from google import genai
 from flask import Flask
 import threading
 
-# سيرفر وهمي
 app = Flask('')
 @app.route('/')
 def home(): return "Bot is Live!"
 threading.Thread(target=lambda: app.run(host='0.0.0.0', port=10000)).start()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
-# اهم سطر - هذا اللي يصلح الخطأ حقك
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.0-flash")
-
+client = genai.Client(api_key=GEMINI_API_KEY)
 logging.basicConfig(level=logging.INFO)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أهلا أستاذ! أرسل لي ملف PDF للكتاب وراح أساعدك 📚")
+    await update.message.reply_text("أهلا أستاذ! أرسل لي ملف PDF 📚")
 
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("جاري قراءة الملف... ⏳")
@@ -33,22 +29,22 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = ""
         with open("book.pdf", "rb") as f:
             reader = PyPDF2.PdfReader(f)
-            for page in reader.pages[:25]:
+            for page in reader.pages[:30]:
                 text += page.extract_text() or ""
-        context.user_data['book_text'] = text[:20000]
-        await update.message.reply_text("تم! ✅ الحين اسألني أي سؤال عن الكتاب أو اضغط (شرح درس / إنشاء اختبار)")
+        context.user_data['book_text'] = text[:25000]
+        await update.message.reply_text("تم! ✅ الحين اسألني أي سؤال عن الكتاب")
     except Exception as e:
-        await update.message.reply_text(f"خطأ في قراءة الملف: {e}")
+        await update.message.reply_text(f"خطأ: {e}")
 
 async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'book_text' not in context.user_data:
-        await update.message.reply_text("أرسل الكتاب أولا PDF من زر (رفع المنهج) 📘")
+        await update.message.reply_text("أرسل الكتاب أولا PDF 📘")
         return
-    question = update.message.text
+    q = update.message.text
     await update.message.reply_text("جاري التفكير... 🤔")
     try:
-        prompt = f"أنت مساعد معلم خبير. بناء على هذا النص من الكتاب: {context.user_data['book_text']}\n\nأجب على: {question}"
-        response = model.generate_content(prompt)
+        prompt = f"أنت مساعد معلم. من هذا الكتاب: {context.user_data['book_text'][:20000]}\n\nأجب على: {q}"
+        response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         await update.message.reply_text(response.text)
     except Exception as e:
         await update.message.reply_text(f"حدث خطأ: {e}")
