@@ -44,7 +44,7 @@ async def handle_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("جاري التفكير... 🤔")
     try:
         prompt = f"أنت مساعد معلم. من هذا الكتاب: {context.user_data['book_text'][:20000]}\n\nأجب على: {q}"
-        response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        response = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
         await update.message.reply_text(response.text)
     except Exception as e:
         await update.message.reply_text(f"حدث خطأ: {e}")
