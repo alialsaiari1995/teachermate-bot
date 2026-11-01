@@ -6,8 +6,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from flask import Flask
 import threading
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+BOT_TOKEN = os.getenv("BOT_TOKEN","").strip().replace(" ", "").replace("\n","").replace("\r","")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY","").strip().replace(" ", "").replace("\n","").replace("\r","")
+print(f"Token length: {len(BOT_TOKEN)}")
 
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
