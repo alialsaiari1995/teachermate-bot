@@ -16,7 +16,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Teachermate Bot is running!"
+    return "Bot is Live!"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("أهلا بك! أنا برنامج المعلم الآلي 🤖\nارسل لي ملف PDF وسألخصه لك.")
@@ -32,20 +32,22 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for page in reader.pages:
                 text += page.extract_text() or ""
         if not text.strip():
-            await update.message.reply_text("ما قدرت اقرأ النص")
+            await update.message.reply_text("ما قدرت اقرأ النص من الملف")
             return
-        response = model.generate_content(f"لخص هذا النص للمعلم: {text[:15000]}")
+        prompt = f"لخص هذا النص للمعلم بشكل مرتب: {text[:15000]}"
+        response = model.generate_content(prompt)
         await update.message.reply_text(response.text[:4000])
     except Exception as e:
-        await update.message.reply_text(f"خطأ: {e}")
+        await update.message.reply_text(f"حدث خطأ: {e}")
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
-    threading.Thread(target=run_flask).start()
+    threading.Thread(target=run_flask, daemon=True).start()
     bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
+    print("Bot started polling...")
     bot_app.run_polling()
