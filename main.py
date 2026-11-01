@@ -1,6 +1,6 @@
 import os
 import PyPDF2
-import google.generativeai as genai
+from google import genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from flask import Flask
@@ -9,9 +9,10 @@ import threading
 BOT_TOKEN = os.getenv("BOT_TOKEN","").strip().replace(" ", "").replace("\n","").replace("\r","")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY","").strip().replace(" ", "").replace("\n","").replace("\r","")
 print(f"Token length: {len(BOT_TOKEN)}")
+print(f"Gemini key starts with: {GEMINI_API_KEY[:5]}")
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# الكود الجديد يدعم مفاتيح AQ.
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 app = Flask(__name__)
 
@@ -35,10 +36,18 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not text.strip():
             await update.message.reply_text("ما قدرت اقرأ النص من الملف")
             return
+        
         prompt = f"لخص هذا النص للمعلم بشكل مرتب: {text[:15000]}"
-        response = model.generate_content(prompt)
+        
+        # الطريقة الجديدة
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt
+        )
+        
         await update.message.reply_text(response.text[:4000])
     except Exception as e:
+        print(f"Error: {e}")
         await update.message.reply_text(f"حدث خطأ: {e}")
 
 def run_flask():
