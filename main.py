@@ -1,4 +1,4 @@
-import os, io, re, json, logging, threading
+import os, io, re, json, logging, threading, asyncio
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import httpx
@@ -87,8 +87,13 @@ async def ask_claude(prompt, max_tokens=8000, json_mode=False):
     }
     if json_mode:
         body["generationConfig"]["responseMimeType"] = "application/json"
-    async with httpx.AsyncClient(timeout=180) as h:
-        r = await h.post(url, json=body, headers={"x-goog-api-key": GEMINI_API_KEY})
+    r = None
+    for attempt in range(4):  # يعيد المحاولة تلقائياً لو Google مشغول
+        async with httpx.AsyncClient(timeout=180) as h:
+            r = await h.post(url, json=body, headers={"x-goog-api-key": GEMINI_API_KEY})
+        if r.status_code not in (429, 500, 503):
+            break
+        await asyncio.sleep(5 * (attempt + 1))
     if r.status_code != 200:
         raise RuntimeError(f"Gemini {r.status_code}: {r.text[:300]}")
     parts = r.json()["candidates"][0]["content"]["parts"]
