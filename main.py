@@ -1,7 +1,7 @@
 import os, io, re, json, logging, threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import anthropic
+import httpx
 from pypdf import PdfReader
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -22,8 +22,8 @@ from telegram.ext import (Application, CommandHandler, CallbackQueryHandler,
 
 logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-MODEL = os.environ.get("MODEL", "claude-sonnet-5-5")
-client = anthropic.AsyncAnthropic()  # يقرأ ANTHROPIC_API_KEY من المتغيرات
+MODEL = os.environ.get("MODEL", "gemini-2.5-flash")
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
 FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "Amiri-Regular.ttf")
 HAS_FONT = os.path.exists(FONT_PATH)
@@ -78,11 +78,21 @@ def pick_text(pages, a, b):
     return text[:MAX_CHARS]
 
 
-async def ask_claude(prompt, max_tokens=8000):
-    r = await client.messages.create(
-        model=MODEL, max_tokens=max_tokens, system=SYSTEM,
-        messages=[{"role": "user", "content": prompt}])
-    return "".join(b.text for b in r.content if b.type == "text")
+async def ask_claude(prompt, max_tokens=8000, json_mode=False):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
+    body = {
+        "system_instruction": {"parts": [{"text": SYSTEM}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": max_tokens},
+    }
+    if json_mode:
+        body["generationConfig"]["responseMimeType"] = "application/json"
+    async with httpx.AsyncClient(timeout=180) as h:
+        r = await h.post(url, json=body, headers={"x-goog-api-key": GEMINI_API_KEY})
+    if r.status_code != 200:
+        raise RuntimeError(f"Gemini {r.status_code}: {r.text[:300]}")
+    parts = r.json()["candidates"][0]["content"]["parts"]
+    return "".join(p.get("text", "") for p in parts)
 
 
 # ---------------- Word / PDF ----------------
@@ -321,12 +331,12 @@ async def run_exam(update, ctx):
 أرجع JSON فقط بدون أي شرح وبدون ``` بهذا الشكل:
 {{"title":"اختبار","mcq":[{{"q":"","options":["","","",""],"answer":"أ"}}],"tf":[{{"q":"","answer":true}}],"essay":[{{"q":"","model_answer":""}}]}}"""
     try:
-        raw = await ask_claude(prompt)
+        raw = await ask_claude(prompt, json_mode=True)
         raw = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.M).strip()
         exam = json.loads(raw)
     except Exception as e:
         logging.exception(e)
-        await update.message.reply_text("صار خطأ أثناء توليد الاختبار، جرّب مرة ثانية.")
+        await update.message.reply_text(f"صار خطأ: {str(e)[:300]}")
         return
     total = (cfg["mcq_n"] * cfg["mcq_m"] + cfg["tf_n"] * cfg["tf_m"] + cfg["es_n"] * cfg["es_m"])
     exam["title"] = f"اختبار (الصفحات {a}-{b}) — الدرجة الكلية {total}"
@@ -350,7 +360,7 @@ async def run_text_task(update, ctx):
         out = await ask_claude(prompt)
     except Exception as e:
         logging.exception(e)
-        await update.message.reply_text("صار خطأ، جرّب مرة ثانية.")
+        await update.message.reply_text(f"صار خطأ: {str(e)[:300]}")
         return
     for i in range(0, len(out), 4000):
         await update.message.reply_text(out[i:i + 4000])
