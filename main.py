@@ -2,7 +2,7 @@
 بوت تليجرام للمعلمين: كل معلم له منهجه الخاص، والبوت يجيب من المنهج فقط.
 FastAPI (webhook + صفحة رفع) + Postgres + Gemini
 """
-import os, re, time, hmac, hashlib, asyncio, base64, tempfile, logging
+import os, re, time, hmac, hashlib, asyncio, base64, tempfile, logging, contextvars
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -28,6 +28,8 @@ MAX_PAGES = int(os.getenv("MAX_PAGES_PER_REQUEST", "60"))
 MAX_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "200000"))
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "600"))
 OCR_ENABLED = os.getenv("OCR_ENABLED", "true").lower() == "true"
+N8N_MODE = os.getenv("N8N_MODE", "false").lower() == "true"  # true = n8n يستقبل رسائل تليجرام
+API_KEY = os.getenv("API_KEY", "")  # مفتاح الاتصال بين n8n والبوت
 WH_SECRET = hashlib.sha256((SECRET + "wh").encode()).hexdigest()[:32]
 
 TG = f"https://api.telegram.org/bot{BOT_TOKEN}"
@@ -70,9 +72,10 @@ async def lifespan(app: FastAPI):
     async with db.acquire() as c:
         await c.execute(SCHEMA)
     http = httpx.AsyncClient(timeout=60)
-    r = await http.post(f"{TG}/setWebhook", json={
-        "url": f"{BASE_URL}/webhook", "secret_token": WH_SECRET, "allowed_updates": ["message"]})
-    log.info("setWebhook: %s", r.text)
+    if not N8N_MODE:
+        r = await http.post(f"{TG}/setWebhook", json={
+            "url": f"{BASE_URL}/webhook", "secret_token": WH_SECRET, "allowed_updates": ["message"]})
+        log.info("setWebhook: %s", r.text)
     yield
     await http.aclose()
     await db.close()
@@ -167,6 +170,7 @@ async def api_upload(bg: BackgroundTasks, t: str, file: UploadFile = File(...)):
         os.path.exists(path) and os.remove(path)
         raise
     title = os.path.splitext(file.filename)[0][:80]
+    await db.execute("INSERT INTO teachers(user_id) VALUES($1) ON CONFLICT DO NOTHING", uid)
     book_id = await db.fetchval("INSERT INTO books(user_id,title) VALUES($1,$2) RETURNING id", uid, title)
     await db.execute("UPDATE teachers SET active_book=$2 WHERE user_id=$1", uid, book_id)
     await send(uid, f"📥 استلمت «{title}». جاري تجهيزه، وأبلغك أول ما يخلص.")
@@ -248,10 +252,18 @@ async def gemini(parts, system=None, max_tokens=4096, temp=0.4) -> str:
 
 
 # ---------- تليجرام ----------
+capture: contextvars.ContextVar = contextvars.ContextVar("capture", default=None)
+
+
 async def send(chat_id: int, text: str):
+    buf = capture.get()
     for i in range(0, max(len(text), 1), 4000):
-        await http.post(f"{TG}/sendMessage", json={
-            "chat_id": chat_id, "text": text[i:i + 4000], "disable_web_page_preview": True})
+        chunk = text[i:i + 4000]
+        if buf is not None:  # وضع n8n: نرجّع الرد بدل ما نرسله
+            buf.append(chunk)
+        else:
+            await http.post(f"{TG}/sendMessage", json={
+                "chat_id": chat_id, "text": chunk, "disable_web_page_preview": True})
 
 
 @app.post("/webhook")
@@ -418,3 +430,18 @@ async def answer(uid: int, text: str):
         await send(uid, "الذكاء الاصطناعي مشغول حالياً، جرب بعد دقيقة.")
     finally:
         busy.discard(uid)
+
+
+# ---------- واجهة n8n ----------
+@app.post("/api/chat")
+async def api_chat(req: Request):
+    data = await req.json()
+    if not API_KEY or not hmac.compare_digest(str(data.get("key", "")), API_KEY):
+        raise HTTPException(403)
+    buf: list[str] = []
+    capture.set(buf)
+    await handle({"message": {
+        "chat": {"type": "private"},
+        "from": {"id": int(data["uid"]), "first_name": data.get("name")},
+        "text": data.get("text", "")}})
+    return {"replies": buf}
