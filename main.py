@@ -29,7 +29,7 @@ MAX_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "200000"))
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "600"))
 OCR_ENABLED = os.getenv("OCR_ENABLED", "true").lower() == "true"
 N8N_MODE = os.getenv("N8N_MODE", "false").lower() == "true"  # true = n8n يستقبل رسائل تليجرام
-API_KEY = os.getenv("API_KEY", "")  # مفتاح الاتصال بين n8n والبوت
+API_KEY = os.getenv("API_KEY", "").strip()  # مفتاح الاتصال بين n8n والبوت
 WH_SECRET = hashlib.sha256((SECRET + "wh").encode()).hexdigest()[:32]
 
 TG = f"https://api.telegram.org/bot{BOT_TOKEN}"
@@ -436,7 +436,9 @@ async def answer(uid: int, text: str):
 @app.post("/api/chat")
 async def api_chat(req: Request):
     data = await req.json()
-    if not API_KEY or not hmac.compare_digest(str(data.get("key", "")), API_KEY):
+    sent = str(data.get("key", "")).strip()
+    if not API_KEY or not hmac.compare_digest(sent.encode(), API_KEY.encode()):
+        log.warning("api key mismatch: server_len=%s sent_len=%s", len(API_KEY), len(sent))
         raise HTTPException(403)
     buf: list[str] = []
     capture.set(buf)
