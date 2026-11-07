@@ -14,13 +14,13 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("bot")
 
 # ---------- الإعدادات ----------
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-GEMINI_KEY = os.environ["GEMINI_API_KEY"]
-DATABASE_URL = os.environ["DATABASE_URL"]
-BASE_URL = os.environ["BASE_URL"].rstrip("/")
-SECRET = os.environ["SECRET_KEY"]
+BOT_TOKEN = os.environ["BOT_TOKEN"].strip()
+GEMINI_KEY = os.environ["GEMINI_API_KEY"].strip()
+DATABASE_URL = os.environ["DATABASE_URL"].strip()
+BASE_URL = os.environ["BASE_URL"].strip().rstrip("/")
+SECRET = os.environ["SECRET_KEY"].strip()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash").strip()
 TRIAL_MIN = int(os.getenv("TRIAL_MINUTES", "10"))
 PRICE = os.getenv("PRICE_SAR", "49")
 PAYMENT_URL = os.getenv("PAYMENT_URL", "")
