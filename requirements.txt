@@ -4,3 +4,7 @@ httpx
 asyncpg
 pymupdf
 python-multipart
+reportlab
+arabic-reshaper==3.0.0
+python-bidi==0.4.2
+python-docx
